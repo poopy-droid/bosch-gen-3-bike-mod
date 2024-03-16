@@ -1,0 +1,92 @@
+const int LED_PIN = 4; // External LED
+const int BUILTIN_LED_PIN = 13; // Built-in LED on Digispark is usually on pin 1
+const int REED_PIN = 2;
+const float TIRE_DIAMETER_INCHES = 27.5;
+const float TIRE_CIRCUMFERENCE_METERS = TIRE_DIAMETER_INCHES * 0.0254 * 3.14159;
+
+volatile unsigned long lastRevolutionTime = 0;
+volatile unsigned long revolutionCount = 0;
+unsigned long lastUpdateTime = 0;
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(REED_PIN, INPUT_PULLUP);
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUILTIN_LED_PIN, OUTPUT);
+  attachInterrupt(digitalPinToInterrupt(REED_PIN), revolutionCounter, RISING);
+  Serial.println("Setup complete.");
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  if (currentTime - lastUpdateTime >= 1000) { // Calculate every second
+    if(revolutionCount > 0){
+      float rpm = calculateRPM(revolutionCount, currentTime - lastRevolutionTime);
+      float kmh = rpmToKmh(rpm);
+      Serial.print("Revolution Count: ");
+      Serial.println(revolutionCount);
+      Serial.print("Raw RPM: ");
+      Serial.println(rpm);
+      Serial.print("Calculated Km/h: ");
+      Serial.println(kmh);
+  
+      if (kmh > 22.2) {
+        kmh = formatSpeed(kmh); // Apply formatting for speeds over 22.2 km/h
+        rpm = kmhToRPM(kmh); // Convert the formatted speed back to RPM for blinking logic
+        Serial.print("Formatted Speed (Km/h): ");
+        Serial.println(kmh);
+      }
+      Serial.print("Effective RPM (for blinking): ");
+      Serial.println(rpm);
+  
+      adjustLedBlink(rpm); // Adjust LED blink rate and on duration based on effective RPM
+    }else{
+      Serial.println("No wheel movement detected in the last second.");
+    }
+
+    revolutionCount = 0; // Reset for next calculation
+    lastRevolutionTime = currentTime;
+    lastUpdateTime = currentTime;
+  }
+}
+
+void adjustLedBlink(float rpm) {
+  static unsigned long lastSignalTime = 0;
+  unsigned long currentTime = millis();
+  if (rpm > 0) {
+    float signalFrequency = rpm / 60.0; // Convert RPM to revolutions per second
+    unsigned long signalInterval = (unsigned long)(1000.0 / signalFrequency);
+    if (currentTime - lastSignalTime >= signalInterval) {
+      digitalWrite(LED_PIN, HIGH);
+      delay(5); // Simulate pulse duration for speedometer signal
+      digitalWrite(LED_PIN, LOW);
+      lastSignalTime = currentTime + 5; // Adjust for next pulse
+      Serial.println("LED pulsed for RPM.");
+    }
+  } else {
+    Serial.println("RPM too low, LED not pulsed.");
+  }
+}
+
+void revolutionCounter() {
+  revolutionCount++;
+  if (revolutionCount == 1) {
+    lastRevolutionTime = millis(); // Restart timing with the first revolution detected
+  }
+}
+
+float calculateRPM(unsigned long revCount, unsigned long timeElapsed) {
+  return (revCount / (timeElapsed / 60000.0)); // Convert ms to minutes for RPM
+}
+
+float rpmToKmh(float rpm) {
+  return (rpm * TIRE_CIRCUMFERENCE_METERS * 60.0) / 1000.0; // Convert RPM to km/h
+}
+
+float formatSpeed(float kmh) {
+  return 20.0 + (kmh / 10.0); // Formatting rule for speeds over 22.2 km/h
+}
+
+float kmhToRPM(float kmh) {
+  return (kmh * 1000.0) / (TIRE_CIRCUMFERENCE_METERS * 60.0); // Convert km/h back to RPM
+}
