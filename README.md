@@ -7,3 +7,6 @@
  40 = 22.4
 
  75 =27.5
+
+
+made for arduino
