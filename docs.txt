@@ -1,0 +1,124 @@
+======================================================================
+BOSCH EBIKE 25 KM/H LIMITER — REED INTERCEPTOR
+Firmware v1.3  |  Arduino  |  rear wheel reed only, no GPS
+======================================================================
+
+WHAT IT IS
+  The Arduino sits inline in the existing rear reed -> SCU cable.
+  It reads wheel speed from the rear reed pulses and sends the
+  modified signal back to the SCU. ONLY the reed is tapped.
+
+HOW SPEED IS MEASURED 
+  Pure reed switch pulse timing — the same math the Bosch SCU
+  itself uses:
+
+      speed [km/h] = (1,000,000 / period [us]) * WHEEL_CIRC_MM / 1000 * 3.6
+
+  One pulse per wheel revolution. Period -> Hz -> km/h via the
+  wheel circumference (WHEEL_CIRC_MM).
+
+THE MODES
+  PASS       = real speed, unmodified (stock)
+  SPEED MODE = above 25 km/h, reported speed follows 0.1 * real + 10
+
+      real 25.0 -> 25.0      real 25.1 -> ~12.5
+      real  30  -> 13        real  40  -> 14
+      real  50  -> 15        real  56  -> 15.6
+
+  Reported speed stays < 25 for real < 150, so support NEVER
+  cuts off. The motor always stays in its <25 support band.
+
+THE SAFETY REED (2nd reed switch)
+  Selects the mode with a magnet:
+
+      MAGNET AWAY  (reed open)  -> PASS
+      MAGNET NEAR  (reed closed) -> SPEED MODE
+
+  The safety reed can be turned ON or OFF in the code using
+  true or false:
+
+      USE_MODE_REED = true  -> safety reed ON  (magnet picks the mode)
+      USE_MODE_REED = false -> safety reed OFF -> ALWAYS SPEED MODE
+
+  The idea: SPEED MODE needs the magnet deliberately positioned.
+  If someone else rides without the safety magnet positioned,
+  PASS (stock) is active. Wink wink.
+
+WHY THE SLEW
+  SPEED MODE jumps the *reported* speed at the 25 km/h knee
+  (25.1 real -> ~12.5 reported). Without the slew, the output
+  pulse frequency would step 12.5 Hz -> ~1 Hz instantly = a
+  hard jerk on the motor.
+
+  SLEW_KMH_PER_S (12 km/h per second) caps how fast the reported
+  speed may move, so:
+    crossing 25 upward  -> ~1 s "fake brake"  (support tapers down)
+    crossing 25 downward-> ~1 s "fake accel"  (support ramps back)
+  Normal riding changes speed slower than 12 km/h/s = no lag.
+
+  Theoretical: this makes the SCU less likely to detect misuse
+  from a sudden speed-signal change.
+
+WIRING
+  Rear wheel reed:
+      reed signal -> Arduino D2 (REED_PIN)
+      reed ground -> GND
+  Arduino -> SCU:
+      Arduino D3 (SCU_PIN) -> existing signal wire to SCU
+      Arduino GND -> SCU GND
+  Safety reed:
+      reed signal -> Arduino D4 (KILL_PIN)
+      reed ground -> GND
+  Power:
+      Arduino from 5V (USB or v_in)
+  Notes:
+      - Board provides both reed pull-ups. If a signal is
+        inverted, flip REED_ACTIVE_LOW / KILL_ACTIVE_LOW.
+      - 3-wire HALL instead of a reed? Power from 5V/GND,
+        tap only the signal to REED_PIN.
+      - Keep everything in a small dry box.
+
+SERIAL MONITOR (115200 baud)
+  Safety reed ON:
+      v1.3 Bosch reed interceptor ready.
+      Safety reed: magnet present -> SPEED MODE (fast), magnet absent -> PASS (stock)
+      real=14.2 reported=14.2 safety=false km/h   <- magnet away: PASS
+      real=26.4 reported=12.6 safety=true  km/h   <- magnet near: SPEED MODE (scaled)
+
+  Safety reed OFF:
+      v1.3 Bosch reed interceptor ready.
+      Safety reed DISABLED: always SPEED MODE.
+      real=26.4 reported=12.6 safety=true  km/h
+
+CONFIGURATION (all in bosch_reed_interceptor.ino)
+  Setting              Default
+  REED_PIN             2
+  KILL_PIN             4
+  SCU_PIN              3
+  REED_ACTIVE_LOW      true
+  KILL_ACTIVE_LOW      true
+  WHEEL_CIRC_MM        2100.0
+  IN_PULSES_PER_REV    1
+  OUT_PULSES_PER_REV   1
+  USE_MODE_REED        true     (true = safety reed on, false = always SPEED MODE)
+  RAMP_KNEE            25.0
+  RAMP_SLOPE           0.1
+  RAMP_INTERCEPT       10.0
+  SLEW_KMH_PER_S       12.0
+  OUT_PULSE_WIDTH_US   3000
+  OUT_OPEN_DRAIN       true     (true = open-drain reed mimic, false = push-pull)
+  USE_SERIAL           true
+  SERIAL_BAUD          115200
+
+DISCLAIMER
+
+UNTESTED. Never flashed on a bike, never ridden. Check
+  everything yourself before riding. If something goes to
+  shit, that's your responsibility.
+  
+
+LEGAL: modifying the 25 km/h limiter may change the bike's
+  legal status and may violate local speed/insurance/warranty
+  rules. Check your laws. If it's against the law where you
+  live, don't use it.
+
