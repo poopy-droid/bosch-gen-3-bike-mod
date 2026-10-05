@@ -1,124 +1,194 @@
-======================================================================
-BOSCH EBIKE 25 KM/H LIMITER — REED INTERCEPTOR
-Firmware v1.3  |  Arduino  |  rear wheel reed only, no GPS
-======================================================================
+# Bosch eBike 25 km/h Limiter — Reed Interceptor
 
-WHAT IT IS
-  The Arduino sits inline in the existing rear reed -> SCU cable.
-  It reads wheel speed from the rear reed pulses and sends the
-  modified signal back to the SCU. ONLY the reed is tapped.
+**Firmware rev 1.3** · Arduino-based · rear reed only, in-line · **no GPS, no
+extra sensors**
 
-HOW SPEED IS MEASURED 
-  Pure reed switch pulse timing — the same math the Bosch SCU
-  itself uses:
+> **TLDR:** this board sits between your rear reed switch and the Bosch
+> SCU. It reads the real wheel speed from the reed pulse timing and feeds
+> the SCU either **true speed** (PASS) or a **scaled-down fast mode**
+> (SPEED MODE). A **safety reed switch picks the mode at runtime**:
+> magnet near the reed = fast, magnet away = stock.
+> **One flag (`USE_MODE_REED`) decides whether the safety reed is used at
+> all.**
 
-      speed [km/h] = (1,000,000 / period [us]) * WHEEL_CIRC_MM / 1000 * 3.6
+---
 
-  One pulse per wheel revolution. Period -> Hz -> km/h via the
-  wheel circumference (WHEEL_CIRC_MM).
+## ⚠️ Read first — untested + legal
 
-THE MODES
-  PASS       = real speed, unmodified (stock)
-  SPEED MODE = above 25 km/h, reported speed follows 0.1 * real + 10
+* **UNTESTED.** Never flashed on a bike, never ridden. I was too lazy.
+Verify wiring polarity and pulse behavior in a safe setting before
+trusting it.
+* **May be illegal.** Modifying the 25 km/h limiter can change your bike's
+legal class and may violate local speed/warranty/insurance rules.
+**If it's against the law where you live, don't use it.**
 
-      real 25.0 -> 25.0      real 25.1 -> ~12.5
-      real  30  -> 13        real  40  -> 14
-      real  50  -> 15        real  56  -> 15.6
+---
 
-  Reported speed stays < 25 for real < 150, so support NEVER
-  cuts off. The motor always stays in its <25 support band.
+## What it is
 
-THE SAFETY REED (2nd reed switch)
-  Selects the mode with a magnet:
+The Arduino sits in-line in the existing rear reed → SCU cable. It reads
+the wheel speed from the rear reed pulses and sends the modified signal
+back to the SCU. **Only the reed is tapped** — no other Bosch line is
+touched.
 
-      MAGNET AWAY  (reed open)  -> PASS
-      MAGNET NEAR  (reed closed) -> SPEED MODE
+| Mode | What the SCU sees |
+| --- | --- |
+| **PASS** | true speed, unmodified (stock behavior) |
+| **SPEED MODE** | above 25 km/h, reported speed follows `0.1 × real + 10` |
 
-  The safety reed can be turned ON or OFF in the code using
-  true or false:
+---
 
-      USE_MODE_REED = true  -> safety reed ON  (magnet picks the mode)
-      USE_MODE_REED = false -> safety reed OFF -> ALWAYS SPEED MODE
+## How speed is measured
 
-  The idea: SPEED MODE needs the magnet deliberately positioned.
-  If someone else rides without the safety magnet positioned,
-  PASS (stock) is active. Wink wink.
+Pure reed switch pulse timing — the same math the Bosch SCU (likely) uses :
 
-WHY THE SLEW
-  SPEED MODE jumps the *reported* speed at the 25 km/h knee
-  (25.1 real -> ~12.5 reported). Without the slew, the output
-  pulse frequency would step 12.5 Hz -> ~1 Hz instantly = a
-  hard jerk on the motor.
+```
+speed[km/h] = (1,000,000 / period[us]) × WHEEL_CIRC_MM / 1000 × 3.6
 
-  SLEW_KMH_PER_S (12 km/h per second) caps how fast the reported
-  speed may move, so:
-    crossing 25 upward  -> ~1 s "fake brake"  (support tapers down)
-    crossing 25 downward-> ~1 s "fake accel"  (support ramps back)
-  Normal riding changes speed slower than 12 km/h/s = no lag.
+```
 
-  Theoretical: this makes the SCU less likely to detect misuse
-  from a sudden speed-signal change.
+One pulse per wheel revolution; the pulse period converts to Hz, then to
+km/h via the wheel circumference (`WHEEL_CIRC_MM`).
 
-WIRING
-  Rear wheel reed:
-      reed signal -> Arduino D2 (REED_PIN)
-      reed ground -> GND
-  Arduino -> SCU:
-      Arduino D3 (SCU_PIN) -> existing signal wire to SCU
-      Arduino GND -> SCU GND
-  Safety reed:
-      reed signal -> Arduino D4 (KILL_PIN)
-      reed ground -> GND
-  Power:
-      Arduino from 5V (USB or v_in)
-  Notes:
-      - Board provides both reed pull-ups. If a signal is
-        inverted, flip REED_ACTIVE_LOW / KILL_ACTIVE_LOW.
-      - 3-wire HALL instead of a reed? Power from 5V/GND,
-        tap only the signal to REED_PIN.
-      - Keep everything in a small dry box.
+---
 
-SERIAL MONITOR (115200 baud)
-  Safety reed ON:
-      v1.3 Bosch reed interceptor ready.
-      Safety reed: magnet present -> SPEED MODE (fast), magnet absent -> PASS (stock)
-      real=14.2 reported=14.2 safety=false km/h   <- magnet away: PASS
-      real=26.4 reported=12.6 safety=true  km/h   <- magnet near: SPEED MODE (scaled)
+## The modes
 
-  Safety reed OFF:
-      v1.3 Bosch reed interceptor ready.
-      Safety reed DISABLED: always SPEED MODE.
-      real=26.4 reported=12.6 safety=true  km/h
+SPEED MODE scales the reported speed above the knee:
 
-CONFIGURATION (all in bosch_reed_interceptor.ino)
-  Setting              Default
-  REED_PIN             2
-  KILL_PIN             4
-  SCU_PIN              3
-  REED_ACTIVE_LOW      true
-  KILL_ACTIVE_LOW      true
-  WHEEL_CIRC_MM        2100.0
-  IN_PULSES_PER_REV    1
-  OUT_PULSES_PER_REV   1
-  USE_MODE_REED        true     (true = safety reed on, false = always SPEED MODE)
-  RAMP_KNEE            25.0
-  RAMP_SLOPE           0.1
-  RAMP_INTERCEPT       10.0
-  SLEW_KMH_PER_S       12.0
-  OUT_PULSE_WIDTH_US   3000
-  OUT_OPEN_DRAIN       true     (true = open-drain reed mimic, false = push-pull)
-  USE_SERIAL           true
-  SERIAL_BAUD          115200
+```
+reported = RAMP_SLOPE × real + RAMP_INTERCEPT       (when real > RAMP_KNEE)
 
-DISCLAIMER
+```
 
-UNTESTED. Never flashed on a bike, never ridden. Check
-  everything yourself before riding. If something goes to
-  shit, that's your responsibility.
-  
+| Real | Reported (SPEED MODE) |
+| --- | --- |
+| 25.0 | 25.0 |
+| 25.1 | **~12.5** |
+| 30 | 13 |
+| 40 | 14 |
+| 50 | 15 |
+| 55 | 15.5 |
+| 56 | 15.6 |
 
-LEGAL: modifying the 25 km/h limiter may change the bike's
-  legal status and may violate local speed/insurance/warranty
-  rules. Check your laws. If it's against the law where you
-  live, don't use it.
+The reported speed stays below 25 for any real speed under 150 km/h, so
+motor support **never cuts off** — the motor always stays in its sub-25
+support band.
+
+---
+
+## The safety reed (2nd reed switch)
+
+A second reed switch + magnet selects the mode at runtime:
+
+| Safety reed (magnet) | Mode | Display | Motor support |
+| --- | --- | --- | --- |
+| **Near** (reed closed) | **SPEED MODE** | scaled: `0.1×real + 10` (56 → 15.6) | full (reported stays < 25) |
+| **Away** (reed open) | **PASS** | true speed, stock | true |
+
+The idea: SPEED MODE needs the magnet deliberately positioned. If someone
+else rides the bike without the magnet positioned, PASS (stock) is active.
+
+### Enable / disable the safety reed 
+
+In `bosch_reed_interceptor.ino`, a single flag controls the safety reed —
+flip it and re-flash:
+
+```c
+#define USE_MODE_REED true   // true  = use the safety reed (magnet picks the mode)
+                             // false = safety reed ignored, always SPEED MODE (fast)
+
+```
+
+| Flag | Safety reed used? | Behavior |
+| --- | --- | --- |
+| **true** (default) | **YES** | runtime: magnet near = **fast (SPEED MODE)**, magnet away = **stock (PASS)** |
+| **false** | **NO** | safety reed **ignored** → **always SPEED MODE (fast)**. The reed is never read and can be left unwired |
+
+Disabling it means easier detection by you bigger brother. so please take your time WIRE IT IN and KEEP IT ON.
+---
+
+## How the slew works (why the speed doesn't snap)
+
+SPEED MODE jumps the *reported* speed at the 25 km/h knee:
+
+| Real | Reported |
+| --- | --- |
+| 25.0 | 25.0 |
+| 25.1 | **~12.5** |
+
+That's a ~12.5 km/h step. Without slew, the output pulse frequency would
+drop ~12.5 Hz → ~1 Hz *instantly* (a hard jerk on the motor).
+`SLEW_KMH_PER_S = 12` caps how fast the reported speed may move, so:
+
+* crossing 25 **upward** → ~1 s "fake brake" (support tapers smoothly)
+* coming back **under** 25 → ~1 s "fake accel" (support ramps back)
+
+Theoretically this makes the SCU less likely to notice anything odd and drop a err
+from a sudden speed-signal change.
+
+---
+
+## Wiring
+
+```
+rear reed (main):    terminal A -> REED_PIN (pin 2)
+                     terminal B -> GND
+safety reed (2nd):   terminal A -> KILL_PIN (pin 4)
+                     terminal B -> GND
+SCU side:            SCU_PIN (pin 3) drives the existing signal wire to the SCU;
+                     Arduino GND -> SCU GND (add a 10k to 5V if the line floats)
+Power:               Find the display power cable, tap into it, and use a step-down converter to supply regulated 5V to the Arduino
+
+```
+
+Notes:
+
+* The code provides the pull-ups (if your bord supports it) for both reed inputs. If either signal
+is inverted, flip `REED_ACTIVE_LOW` / `KILL_ACTIVE_LOW`.
+* Keep the whole thing in a small **dry box**.
+* Mount the safety reed + magnet wherever is handy: frame, handlebar, bag.
+With `USE_MODE_REED = false` the safety reed can be left **unwired** —
+the board never reads it.
+
+---
+
+## Configuration
+
+Everything lives in `bosch_reed_interceptor.ino`:
+
+| Constant | Default | What it does |
+| --- | --- | --- |
+| `REED_PIN` | 2 | rear reed signal input |
+| `KILL_PIN` | 4 | safety reed signal input |
+| `SCU_PIN` | 3 | output drive to the SCU |
+| `REED_ACTIVE_LOW` | true | true = line goes LOW when the magnet is present |
+| `KILL_ACTIVE_LOW` | true | same as above, for the safety reed |
+| **`USE_MODE_REED`** | **true** | **true = safety reed picks the mode (magnet = fast, away = stock) · false = safety reed ignored, always SPEED MODE (fast)** |
+| `WHEEL_CIRC_MM` | 2100.0 | wheel + tire circumference (mm) |
+| `IN_PULSES_PER_REV` | 1 | magnets on the wheel (usually 1) |
+| `OUT_PULSES_PER_REV` | 1 | fake pulses emitted per revolution (keep at 1) |
+| `RAMP_KNEE` | 25.0 | where SPEED MODE scaling starts (km/h) |
+| `RAMP_SLOPE` / `RAMP_INTERCEPT` | 0.1 / 10.0 | SPEED MODE: `reported = 0.1×real + 10` |
+| `SLEW_KMH_PER_S` | 12.0 | max reported-speed change rate (km/h per second) |
+| `OUT_PULSE_WIDTH_US` | 3000 | output pulse width in µs (clamped to period/3) |
+| `OUT_OPEN_DRAIN` | true | true = open-drain reed mimic, false = push-pull drive |
+| `USE_SERIAL` / `SERIAL_BAUD` | true / 115200 | serial monitor output |
+
+---
+
+## Internals (tweak rarely)
+
+| Constant | Default | What it does |
+| --- | --- | --- |
+| `SPEED_ALPHA` | 0.5 | IIR smoothing factor on the per-period speed |
+| `STOP_TIMEOUT` | 1500 µs | time after the last pulse before the estimate starts decaying |
+| `STOP_DECAY` | 30.0 | decay rate of the estimate once the wheel is stopped (km/h per s) |
+| `DEBOUNCE_US` | 3000 µs | debounce window for input edges |
+| `KILL_DEBOUNCE_US` | 50000 µs | debounce window for the safety reed level |
+| `MIN_PULSE_US` | 20000 µs | ignore input edges closer together than this |
+| `MAX_OUT_HZ` | 40 | safety clamp on the emitted pulse rate |
+| `MAX_DT_US` | 10000 µs | clamps loop dt so a stalled loop can't fire a pulse burst |
+
+---
 
